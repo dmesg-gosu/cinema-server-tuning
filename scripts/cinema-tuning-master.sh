@@ -127,7 +127,13 @@ if [ "$EUID" -ne 0 ]; then
 fi
 print_success "Running as root"
 
-# Собираем информацию о системе
+# Собираем информацию о системе (ПЕРЕД определением переменных профиля!)
+CPU_COUNT=$(nproc 2>/dev/null || echo "4")
+CPU_MODEL=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | cut -d':' -f2 | xargs || echo "Unknown")
+TOTAL_MEM=$(free -h 2>/dev/null | grep Mem | awk '{print $2}' || echo "N/A")
+AVAIL_MEM=$(free -h 2>/dev/null | grep Mem | awk '{print $7}' || echo "N/A")
+DISK_COUNT=$(lsblk -d 2>/dev/null | grep -E "^sd|^nvme" | wc -l || echo "1")
+
 {
     echo "Timestamp: $(date)"
     echo "Hostname: $(hostname)"
@@ -135,27 +141,22 @@ print_success "Running as root"
     echo ""
     
     echo "📊 CPU Information:"
-    CPU_COUNT=$(nproc)
-    CPU_MODEL=$(grep "model name" /proc/cpuinfo | head -1 | cut -d':' -f2 | xargs)
     echo "  Cores: $CPU_COUNT"
     echo "  Model: $CPU_MODEL"
     echo ""
     
     echo "💾 Memory:"
-    TOTAL_MEM=$(free -h | grep Mem | awk '{print $2}')
-    AVAIL_MEM=$(free -h | grep Mem | awk '{print $7}')
     echo "  Total: $TOTAL_MEM"
     echo "  Available: $AVAIL_MEM"
     echo ""
     
     echo "💿 Disk Information:"
-    DISK_COUNT=$(lsblk -d | grep -c "^sd\|^nvme")
     echo "  Number of disks: $DISK_COUNT"
-    lsblk -d -o NAME,SIZE,TYPE,ROTA | head -10
+    lsblk -d -o NAME,SIZE,TYPE 2>/dev/null | head -10
     echo ""
     
     echo "🌐 Network:"
-    ip link show | grep -E "^\d+:|mtu"
+    ip link show 2>/dev/null | grep -E "^\d+:|mtu"
     echo ""
     
     echo "📈 Current System Settings:"
@@ -175,10 +176,24 @@ print_header "Phase 2: Profile Recommendation"
 # Определяем рекомендуемый профиль
 RECOMMENDED_PROFILE=0
 
-if [ "$CPU_COUNT" -lt 4 ] || [ "$TOTAL_MEM" == "2.0Gi" ] || [ "$DISK_COUNT" -lt 2 ]; then
+# Правильно парсим переменные
+CPU_COUNT=$(nproc 2>/dev/null || echo "4")
+TOTAL_MEM_VALUE=$(free -h 2>/dev/null | grep Mem | awk '{print $2}' | sed 's/Gi//' | sed 's/Mi//')
+TOTAL_MEM_UNIT=$(free -h 2>/dev/null | grep Mem | awk '{print $2}' | grep -o '[A-Z]i$')
+DISK_COUNT=$(lsblk -d 2>/dev/null | grep -E "^sd|^nvme" | wc -l || echo "1")
+
+# Конвертируем в числа для сравнения
+if [[ $TOTAL_MEM_UNIT == "Gi" ]]; then
+    TOTAL_MEM_NUM=$((${TOTAL_MEM_VALUE%.*}))
+else
+    TOTAL_MEM_NUM=0
+fi
+
+# Рекомендация профиля
+if [ "$CPU_COUNT" -lt 4 ] || [ "$TOTAL_MEM_NUM" -lt 8 ] || [ "$DISK_COUNT" -lt 2 ]; then
     RECOMMENDED_PROFILE=0  # minimal
     PROFILE_REASON="Система имеет ограниченные ресурсы"
-elif [ "$CPU_COUNT" -lt 8 ] || [[ "$TOTAL_MEM" == *"Gi" && $(echo "$TOTAL_MEM" | grep -o '^[0-9]*' | head -1) -lt 16 ]]; then
+elif [ "$CPU_COUNT" -lt 8 ] || [ "$TOTAL_MEM_NUM" -lt 16 ]; then
     RECOMMENDED_PROFILE=1  # standard
     PROFILE_REASON="Система среднего размера"
 else
