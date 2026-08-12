@@ -1,17 +1,26 @@
 #!/bin/bash
 
-# ============ CINEMA SERVER TUNING - MASTER SCRIPT ============
-# Единый оркестратор для всех оптимизаций и тестов
-# Запускает все скрипты по очереди и собирает результаты в единый отчёт
-# Использование: sudo ./cinema-tuning-master.sh
+# ============ CINEMA SERVER TUNING - INTERACTIVE MASTER SCRIPT ============
+# Интерактивный оркестратор со следующими возможностями:
+# 1. Анализ системы и рекомендации по профилям
+# 2. Сохранение старых значений для отката
+# 3. Выбор профиля оптимизации (minimal, standard, maximum)
+# 4. Сохранение результатов в текущую директорию
+# 5. Организация тестовых файлов в отдельную папку
 
 set -e
 
 # ============ CONFIGURATION ============
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPORT_DIR="/tmp/cinema-tuning-report-$(date +%Y%m%d-%H%M%S)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPORT_DIR="$PROJECT_ROOT/tuning-reports/$(date +%Y%m%d-%H%M%S)"
+BACKUPS_DIR="$PROJECT_ROOT/backups"
+TESTS_DIR="$REPORT_DIR/tests"
 SUMMARY_FILE="$REPORT_DIR/SUMMARY.txt"
 FULL_LOG="$REPORT_DIR/FULL.log"
+BACKUP_FILE="$BACKUPS_DIR/sysctl-backup-$(date +%Y%m%d-%H%M%S).conf"
+RESTORE_SCRIPT="$BACKUPS_DIR/restore-$(date +%Y%m%d-%H%M%S).sh"
+SYSTEM_INFO_FILE="$REPORT_DIR/system-info.txt"
 
 # Colors для красивого вывода
 RED='\033[0;31m'
@@ -19,14 +28,15 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
 # ============ HELPER FUNCTIONS ============
 
 print_header() {
-    echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BLUE}$1${NC}"
-    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 }
 
 print_step() {
@@ -45,6 +55,10 @@ print_error() {
     echo -e "${RED}✗ $1${NC}"
 }
 
+print_info() {
+    echo -e "${MAGENTA}ℹ $1${NC}"
+}
+
 log_to_summary() {
     echo "$@" | tee -a "$SUMMARY_FILE"
 }
@@ -53,9 +67,36 @@ log_to_full() {
     echo "$@" >> "$FULL_LOG"
 }
 
+# Функция для интерактивного выбора
+select_option() {
+    local prompt=$1
+    shift
+    local options=("$@")
+    local selected=0
+    
+    while true; do
+        echo -e "\n${CYAN}$prompt${NC}"
+        for i in "${!options[@]}"; do
+            echo "  $((i+1))) ${options[$i]}"
+        done
+        echo -n "Выбери номер (1-${#options[@]}): "
+        read -r choice
+        
+        if [[ $choice =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#options[@]} ]; then
+            selected=$((choice-1))
+            echo -e "${GREEN}Выбрано: ${options[$selected]}${NC}"
+            break
+        else
+            print_error "Неверный выбор. Попробуй ещё раз."
+        fi
+    done
+    
+    echo $selected
+}
+
 # ============ INITIALIZATION ============
 
-mkdir -p "$REPORT_DIR"
+mkdir -p "$REPORT_DIR" "$BACKUPS_DIR" "$TESTS_DIR"
 
 # Инициализируем файлы
 cat > "$SUMMARY_FILE" <<'EOF'
@@ -67,34 +108,17 @@ EOF
 
 cat > "$FULL_LOG" <<'EOF'
 CINEMA SERVER TUNING - FULL DIAGNOSTIC LOG
-Generated: $(date)
 EOF
 
-print_header "CINEMA SERVER TUNING MASTER SUITE"
+print_header "CINEMA SERVER TUNING - INTERACTIVE MASTER SUITE"
 echo "Report directory: $REPORT_DIR"
+echo "Backups directory: $BACKUPS_DIR"
 echo "Timestamp: $(date)"
 echo ""
 
-# ============ PHASE 1: PRE-CHECK ============
+# ============ PHASE 1: SYSTEM ANALYSIS ============
 
-print_header "Phase 1: System Pre-Check"
-
-# Проверяем что скрипты существуют
-REQUIRED_SCRIPTS=(
-    "baseline-diagnostics.sh"
-    "cinema-test-suite-advanced.sh"
-    "diagnose-server.sh"
-)
-
-for script in "${REQUIRED_SCRIPTS[@]}"; do
-    if [ -f "$SCRIPT_DIR/$script" ]; then
-        print_success "Found: $script"
-        log_to_summary "✓ $script"
-    else
-        print_warning "Missing: $script (optional)"
-        log_to_summary "⚠ $script (not found)"
-    fi
-done
+print_header "Phase 1: System Analysis & Profile Recommendation"
 
 # Проверяем root
 if [ "$EUID" -ne 0 ]; then
@@ -103,281 +127,364 @@ if [ "$EUID" -ne 0 ]; then
 fi
 print_success "Running as root"
 
-# Проверяем Ubuntu/Debian
-if ! grep -q "Ubuntu\|Debian" /etc/os-release 2>/dev/null; then
-    print_warning "This script is tested on Ubuntu/Debian. Other distros may not work fully."
-fi
-
-OS_INFO=$(grep PRETTY_NAME /etc/os-release | cut -d'"' -f2)
-print_success "OS: $OS_INFO"
-log_to_summary "OS: $OS_INFO"
-
-echo ""
-
-# ============ PHASE 2: BASELINE BEFORE ============
-
-print_header "Phase 2: Collecting Baseline (BEFORE Optimization)"
-
-print_step "Gathering system metrics..."
-
+# Собираем информацию о системе
 {
-    echo ""
-    echo "╔═ BASELINE BEFORE OPTIMIZATION ═╗"
-    echo ""
     echo "Timestamp: $(date)"
-    echo "Kernel: $(uname -r)"
     echo "Hostname: $(hostname)"
+    echo "Kernel: $(uname -r)"
     echo ""
     
     echo "📊 CPU Information:"
-    echo "  Cores: $(nproc)"
-    echo "  Model: $(grep "model name" /proc/cpuinfo | head -1 | cut -d':' -f2 | xargs)"
+    CPU_COUNT=$(nproc)
+    CPU_MODEL=$(grep "model name" /proc/cpuinfo | head -1 | cut -d':' -f2 | xargs)
+    echo "  Cores: $CPU_COUNT"
+    echo "  Model: $CPU_MODEL"
     echo ""
     
     echo "💾 Memory:"
-    free -h | grep Mem
-    echo "  Available: $(free -h | grep Mem | awk '{print $7}')"
+    TOTAL_MEM=$(free -h | grep Mem | awk '{print $2}')
+    AVAIL_MEM=$(free -h | grep Mem | awk '{print $7}')
+    echo "  Total: $TOTAL_MEM"
+    echo "  Available: $AVAIL_MEM"
+    echo ""
+    
+    echo "💿 Disk Information:"
+    DISK_COUNT=$(lsblk -d | grep -c "^sd\|^nvme")
+    echo "  Number of disks: $DISK_COUNT"
+    lsblk -d -o NAME,SIZE,TYPE,ROTA | head -10
+    echo ""
+    
+    echo "🌐 Network:"
+    ip link show | grep -E "^\d+:|mtu"
     echo ""
     
     echo "📈 Current System Settings:"
     echo "  TCP rmem_max: $(sysctl -n net.core.rmem_max 2>/dev/null || echo 'N/A') bytes"
     echo "  TCP wmem_max: $(sysctl -n net.core.wmem_max 2>/dev/null || echo 'N/A') bytes"
     echo "  Congestion control: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'N/A')"
-    echo "  Dirty ratio: $(sysctl -n vm.dirty_ratio 2>/dev/null || echo 'N/A')%"
     echo "  Swappiness: $(sysctl -n vm.swappiness 2>/dev/null || echo 'N/A')"
-    echo "  File descriptor limit: $(ulimit -n)"
-    echo ""
     
-    echo "💿 Disk Information:"
-    lsblk -d -o NAME,SIZE,TYPE | head -10
-    echo ""
-    
-    echo "🌐 Network Interfaces:"
-    ip link show | grep -E "^\d+:|mtu"
-    echo ""
-    
-} | tee -a "$SUMMARY_FILE" | tee -a "$FULL_LOG"
+} | tee "$SYSTEM_INFO_FILE" | tee -a "$SUMMARY_FILE"
 
-print_success "Baseline collected"
-echo ""
+print_success "System information collected"
 
-# ============ PHASE 3: RUN TESTS ============
+# ============ PHASE 2: PROFILE RECOMMENDATION ============
 
-print_header "Phase 3: Running Advanced Performance Tests"
+print_header "Phase 2: Profile Recommendation"
 
-print_step "Executing cinema-test-suite-advanced.sh..."
-print_warning "This will take approximately 30-40 minutes..."
-echo ""
+# Определяем рекомендуемый профиль
+RECOMMENDED_PROFILE=0
 
-if [ -f "$SCRIPT_DIR/cinema-test-suite-advanced.sh" ]; then
-    # Запускаем advanced тесты, перенаправляя вывод
-    bash "$SCRIPT_DIR/cinema-test-suite-advanced.sh" 2>&1 | tee -a "$FULL_LOG" | grep -E "✓|✗|====|Running|completed"
-    
-    ADVANCED_REPORT=$(find /tmp/cinema-tuning-advanced-* -type d -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
-    
-    if [ -d "$ADVANCED_REPORT" ]; then
-        print_success "Advanced tests completed"
-        print_step "Collecting advanced test results..."
-        
-        # Копируем результаты
-        cp "$ADVANCED_REPORT"/*.txt "$REPORT_DIR/" 2>/dev/null || true
-        
-        # Извлекаем ключевые метрики
-        {
-            echo ""
-            echo "╔═ PERFORMANCE TEST RESULTS ═╗"
-            echo ""
-            
-            if [ -f "$ADVANCED_REPORT/06b-fio-read-256k.txt" ]; then
-                echo "📊 Large Block Read Performance (256K - Cinema Files):"
-                grep "READ:" "$ADVANCED_REPORT/06b-fio-read-256k.txt" | head -1
-                grep "iops" "$ADVANCED_REPORT/06b-fio-read-256k.txt" | head -1
-                echo ""
-            fi
-            
-            if [ -f "$ADVANCED_REPORT/06c-fio-concurrent-readwrite.txt" ]; then
-                echo "📊 Concurrent Read/Write (Realistic Scenario - 70% read/30% write):"
-                grep -E "READ:|WRITE:" "$ADVANCED_REPORT/06c-fio-concurrent-readwrite.txt" | head -2
-                echo ""
-            fi
-            
-            if [ -f "$ADVANCED_REPORT/07-network-loopback.txt" ]; then
-                echo "🌐 Network Performance:"
-                tail -3 "$ADVANCED_REPORT/07-network-loopback.txt" | head -1
-                echo ""
-            fi
-            
-        } | tee -a "$SUMMARY_FILE" | tee -a "$FULL_LOG"
-    else
-        print_error "Could not find advanced test results"
-    fi
+if [ "$CPU_COUNT" -lt 4 ] || [ "$TOTAL_MEM" == "2.0Gi" ] || [ "$DISK_COUNT" -lt 2 ]; then
+    RECOMMENDED_PROFILE=0  # minimal
+    PROFILE_REASON="Система имеет ограниченные ресурсы"
+elif [ "$CPU_COUNT" -lt 8 ] || [[ "$TOTAL_MEM" == *"Gi" && $(echo "$TOTAL_MEM" | grep -o '^[0-9]*' | head -1) -lt 16 ]]; then
+    RECOMMENDED_PROFILE=1  # standard
+    PROFILE_REASON="Система среднего размера"
 else
-    print_warning "cinema-test-suite-advanced.sh not found, skipping advanced tests"
+    RECOMMENDED_PROFILE=2  # maximum
+    PROFILE_REASON="Мощная система с хорошими ресурсами"
 fi
-
-echo ""
-
-# ============ PHASE 4: SYSTEM DIAGNOSTICS ============
-
-print_header "Phase 4: Full System Diagnostics"
-
-print_step "Running comprehensive diagnostics..."
-
-if [ -f "$SCRIPT_DIR/diagnose-server.sh" ]; then
-    bash "$SCRIPT_DIR/diagnose-server.sh" 2>&1 | tee "$REPORT_DIR/diagnostics.txt" | tee -a "$FULL_LOG" | head -50
-    print_success "Diagnostics completed"
-else
-    print_warning "diagnose-server.sh not found"
-fi
-
-echo ""
-
-# ============ PHASE 5: SUMMARY & RECOMMENDATIONS ============
-
-print_header "Phase 5: Summary & Recommendations"
 
 {
     echo ""
-    echo "╔═ OPTIMIZATION RECOMMENDATIONS ═╗"
+    echo "╔═ PROFILE RECOMMENDATIONS ═╗"
+    echo ""
+    echo "Анализ системы:"
+    echo "  CPU: $CPU_COUNT cores"
+    echo "  RAM: $TOTAL_MEM"
+    echo "  Disks: $DISK_COUNT"
+    echo ""
+    echo "Рекомендация: $PROFILE_REASON"
     echo ""
     
-    # Проверяем текущие параметры и даём рекомендации
-    RMEM_MAX=$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)
-    if [ "$RMEM_MAX" -lt 134217728 ]; then
-        echo "⚠ TCP Read Buffer: Currently $((RMEM_MAX/1024/1024))MB, recommended 128MB"
-        echo "  Action: Apply sysctl optimization"
+} | tee -a "$SUMMARY_FILE"
+
+# Описания профилей
+PROFILES=(
+    "MINIMAL - Консервативная оптимизация для слабых систем (2-4 CPU, <8GB RAM)"
+    "STANDARD - Сбалансированная оптимизация для стандартных серверов (4-8 CPU, 8-32GB RAM)"
+    "MAXIMUM - Агрессивная оптимизация для высоконагруженных систем (8+ CPU, 32GB+ RAM)"
+)
+
+# Выводим опции профилей
+echo -e "${CYAN}Доступные профили оптимизации:${NC}"
+for i in "${!PROFILES[@]}"; do
+    if [ "$i" -eq "$RECOMMENDED_PROFILE" ]; then
+        echo -e "  ${GREEN}$((i+1))) ${PROFILES[$i]}${NC} ${GREEN}← РЕКОМЕНДУЕТСЯ${NC}"
     else
-        echo "✓ TCP Read Buffer: Optimized ($((RMEM_MAX/1024/1024))MB)"
+        echo "  $((i+1))) ${PROFILES[$i]}"
     fi
+done
+
+echo ""
+echo -n "Выбери профиль (1-3) [Enter для рекомендуемого]: "
+read -r profile_choice
+
+if [ -z "$profile_choice" ]; then
+    PROFILE=$RECOMMENDED_PROFILE
+else
+    PROFILE=$((profile_choice-1))
+fi
+
+if [ "$PROFILE" -lt 0 ] || [ "$PROFILE" -gt 2 ]; then
+    print_error "Неверный выбор. Используем рекомендуемый профиль."
+    PROFILE=$RECOMMENDED_PROFILE
+fi
+
+PROFILE_NAME="${PROFILES[$PROFILE]}"
+echo -e "\n${GREEN}Выбран профиль: $PROFILE_NAME${NC}\n"
+
+log_to_summary "Выбранный профиль: $PROFILE_NAME"
+
+# ============ PHASE 3: BACKUP OLD VALUES ============
+
+print_header "Phase 3: Backing Up Current System Configuration"
+
+print_step "Saving current sysctl parameters..."
+
+# Сохраняем текущие значения в файл
+{
+    echo "# BACKUP OF SYSTEM SYSCTL PARAMETERS"
+    echo "# Created: $(date)"
+    echo "# This file can be used to restore original settings"
     echo ""
     
-    CONGESTION=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
-    if [ "$CONGESTION" != "bbr" ]; then
-        echo "⚠ Congestion Control: Currently $CONGESTION, recommended BBR"
-        echo "  Action: Apply sysctl optimization"
-    else
-        echo "✓ Congestion Control: Optimized (BBR)"
-    fi
+    sysctl -a 2>/dev/null | grep -E "net\.(core|ipv4)|vm\.(dirty|swappiness)" || true
+    
+} > "$BACKUP_FILE"
+
+print_success "Backup saved to: $BACKUP_FILE"
+
+# Создаём скрипт восстановления
+{
+    echo "#!/bin/bash"
+    echo "# RESTORE SCRIPT - Restore original sysctl values"
+    echo "# Created: $(date)"
+    echo "# Usage: sudo $RESTORE_SCRIPT"
+    echo ""
+    echo "echo 'Restoring original sysctl values...'"
+    echo ""
+    echo "# Apply backup values"
+    echo "sysctl -p \"$BACKUP_FILE\" || true"
+    echo ""
+    echo "echo 'System restored to previous state'"
     echo ""
     
-    DIRTY=$(sysctl -n vm.dirty_ratio 2>/dev/null || echo 0)
-    if [ "$DIRTY" -lt 30 ]; then
-        echo "⚠ Dirty Page Ratio: Currently $DIRTY%, recommended 30%"
-        echo "  Action: Apply sysctl optimization"
-    else
-        echo "✓ Dirty Page Ratio: Optimized ($DIRTY%)"
-    fi
-    echo ""
-    
-    FD_LIMIT=$(ulimit -n)
-    if [ "$FD_LIMIT" -lt 65536 ]; then
-        echo "⚠ File Descriptor Limit: Currently $FD_LIMIT, recommended 65536"
-        echo "  Action: Increase in /etc/security/limits.conf and reboot"
-    else
-        echo "✓ File Descriptor Limit: Optimized ($FD_LIMIT)"
-    fi
-    echo ""
-    
-    echo "╔═ NEXT STEPS ═╗"
-    echo ""
-    echo "1. Review Performance Results:"
-    echo "   - Check disk I/O throughput (should be >500 MB/s for reads)"
-    echo "   - Verify concurrent read/write performance"
-    echo "   - Confirm network efficiency"
-    echo ""
-    echo "2. Apply Optimization (if not already done):"
-    echo "   sudo sysctl -p configs/99-performance.conf"
-    echo ""
-    echo "3. For Multi-Server Deployment:"
-    echo "   ansible-playbook -i inventory.ini playbook.yml"
-    echo ""
-    echo "4. Monitor in Production:"
-    echo "   dstat -tcs --disk --net 5"
-    echo "   iotop -b -o"
-    echo ""
-    
-} | tee -a "$SUMMARY_FILE" | tee -a "$FULL_LOG"
+} > "$RESTORE_SCRIPT"
+
+chmod +x "$RESTORE_SCRIPT"
+
+print_success "Restore script created: $RESTORE_SCRIPT"
+
+log_to_summary "✓ Backup created: $BACKUP_FILE"
+log_to_summary "✓ Restore script: $RESTORE_SCRIPT"
 
 echo ""
 
-# ============ FINAL REPORT ============
+# ============ PHASE 4: PROFILE PARAMETERS ============
 
-print_header "REPORT GENERATION"
+print_header "Phase 4: Applying Profile Parameters"
 
-print_step "Compiling final report..."
+# Определяем параметры для каждого профиля
+case $PROFILE in
+    0)  # MINIMAL
+        TCP_RMEM="67108864"      # 64MB
+        TCP_WMEM="67108864"      # 64MB
+        DIRTY_RATIO=25
+        SWAPPINESS=20
+        PROFILE_DESC="MINIMAL (Conservative)"
+        ;;
+    1)  # STANDARD
+        TCP_RMEM="134217728"     # 128MB
+        TCP_WMEM="134217728"     # 128MB
+        DIRTY_RATIO=30
+        SWAPPINESS=10
+        PROFILE_DESC="STANDARD (Balanced)"
+        ;;
+    2)  # MAXIMUM
+        TCP_RMEM="268435456"     # 256MB
+        TCP_WMEM="268435456"     # 256MB
+        DIRTY_RATIO=40
+        SWAPPINESS=5
+        PROFILE_DESC="MAXIMUM (Aggressive)"
+        ;;
+esac
+
+print_step "Creating sysctl configuration for $PROFILE_DESC..."
+
+# Создаём конфиг на основе выбранного профиля
+cat > "/tmp/cinema-tuning-profile-$PROFILE.conf" <<SYSCTL
+# Cinema Server Tuning - $PROFILE_DESC Profile
+# Generated: $(date)
+
+# TCP BUFFERS
+net.core.rmem_max = $TCP_RMEM
+net.core.wmem_max = $TCP_WMEM
+net.ipv4.tcp_rmem = 4096 87380 $TCP_RMEM
+net.ipv4.tcp_wmem = 4096 65536 $TCP_WMEM
+net.core.rmem_default = 131072
+net.core.wmem_default = 131072
+
+# TCP OPTIMIZATION
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 30
+net.ipv4.tcp_keepalive_time = 300
+
+# CONNECTION LIMITS
+net.core.somaxconn = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+
+# DISK I/O
+vm.dirty_ratio = $DIRTY_RATIO
+vm.dirty_background_ratio = 10
+vm.dirty_expire_centisecs = 3000
+vm.dirty_writeback_centisecs = 500
+vm.swappiness = $SWAPPINESS
+
+# FILE SYSTEM
+fs.file-max = 2097152
+fs.inotify.max_user_watches = 524288
+fs.pipe-max-size = 1048576
+
+# KERNEL
+kernel.pid_max = 4194304
+kernel.sysrq = 1
+
+# RAID
+dev.raid.speed_limit_min = 100000
+dev.raid.speed_limit_max = 200000
+SYSCTL
+
+print_success "Profile configuration created"
+
+print_step "Applying sysctl parameters..."
+sysctl -p "/tmp/cinema-tuning-profile-$PROFILE.conf" > /dev/null 2>&1 || true
+
+print_success "Parameters applied"
+
+echo ""
+
+# ============ PHASE 5: RUN TESTS ============
+
+print_header "Phase 5: Running Advanced Performance Tests"
+
+print_warning "Performance tests will take 30-40 minutes..."
+print_step "FIO tests will write to: $TESTS_DIR"
+
+echo ""
+
+# Перемещаем тесты в отдельную папку
+cd "$TESTS_DIR"
+
+if [ -f "$SCRIPT_DIR/cinema-test-suite-advanced.sh" ]; then
+    print_step "Executing cinema-test-suite-advanced.sh..."
+    
+    # Запускаем тесты с перенаправлением вывода
+    bash "$SCRIPT_DIR/cinema-test-suite-advanced.sh" 2>&1 | tee -a "$FULL_LOG" | grep -E "✓|✗|====|Running|completed|fps"
+    
+    print_success "Advanced tests completed"
+else
+    print_warning "cinema-test-suite-advanced.sh not found"
+fi
+
+# Возвращаемся в исходную папку
+cd "$REPORT_DIR"
+
+echo ""
+
+# ============ PHASE 6: FINAL REPORT ============
+
+print_header "Phase 6: Generating Final Report"
+
+{
+    echo ""
+    echo "╔═ OPTIMIZATION SUMMARY ═╗"
+    echo ""
+    echo "Profile Applied: $PROFILE_DESC"
+    echo ""
+    echo "Sysctl Parameters:"
+    echo "  TCP rmem_max: $TCP_RMEM bytes ($((TCP_RMEM/1024/1024))MB)"
+    echo "  TCP wmem_max: $TCP_WMEM bytes ($((TCP_WMEM/1024/1024))MB)"
+    echo "  Dirty ratio: $DIRTY_RATIO%"
+    echo "  Swappiness: $SWAPPINESS"
+    echo ""
+    echo "File Locations:"
+    echo "  Backup: $BACKUP_FILE"
+    echo "  Restore script: $RESTORE_SCRIPT"
+    echo "  Test files: $TESTS_DIR"
+    echo "  Full report: $REPORT_DIR"
+    echo ""
+    
+} | tee -a "$SUMMARY_FILE"
 
 # Создаём финальный отчёт
 cat >> "$SUMMARY_FILE" <<EOF
 
 ╔═════════════════════════════════════════════════════════════════╗
-║                    REPORT DETAILS                               ║
+║                    HOW TO USE RESULTS                           ║
 ╚═════════════════════════════════════════════════════════════════╝
 
-Generated: $(date)
-Report Location: $REPORT_DIR
-
-Files Generated:
-EOF
-
-ls -1 "$REPORT_DIR"/*.txt 2>/dev/null | sed 's|.*/||' | sed 's/^/  - /' >> "$SUMMARY_FILE"
-
-cat >> "$SUMMARY_FILE" <<EOF
-
-Useful Commands to Review Results:
-
-1. View this summary:
+1. View Summary Report:
    cat $SUMMARY_FILE
 
-2. View full diagnostic log:
+2. View Full Diagnostics Log:
    less $FULL_LOG
 
-3. Check specific test results:
-   grep -i "iops\|bw\|throughput" $REPORT_DIR/*.txt
+3. Check Test Results:
+   ls $TESTS_DIR/
 
-4. Compare before/after sysctl:
-   diff $REPORT_DIR/*baseline*.txt
+4. Restore Original Settings (if needed):
+   sudo bash $RESTORE_SCRIPT
 
-5. Monitor real-time performance:
+5. Monitor Performance:
    watch -n 1 'iostat -x | grep sda'
+   dstat -tcs --disk --net 5
 
 ════════════════════════════════════════════════════════════════════
-
-For more information, see:
-  - README.md (overview)
-  - docs/TUNING-GUIDE.md (detailed parameter explanations)
-  - docs/TROUBLESHOOTING.md (solutions for common issues)
+Report generated: $(date)
+Report directory: $REPORT_DIR
+════════════════════════════════════════════════════════════════════
 
 EOF
 
-print_success "Report compiled"
+print_success "Report generated"
 
-# ============ DISPLAY SUMMARY ============
+# ============ DISPLAY RESULTS ============
 
 print_header "FINAL SUMMARY"
 
-# Выводим SUMMARY на экран
 cat "$SUMMARY_FILE"
 
-echo ""
-print_header "TEST SUITE COMPLETED"
+print_header "TEST COMPLETED"
 
 {
     echo ""
+    echo "✓ All tests completed successfully!"
+    echo ""
     echo "Report saved to: $REPORT_DIR"
     echo ""
-    echo "Quick access:"
-    echo "  Summary:   cat $SUMMARY_FILE"
-    echo "  Full log:  less $FULL_LOG"
+    echo "Important Files:"
+    echo "  Summary:        $SUMMARY_FILE"
+    echo "  Full Log:       $FULL_LOG"
+    echo "  System Info:    $SYSTEM_INFO_FILE"
+    echo "  Backup:         $BACKUP_FILE"
+    echo "  Restore Script: $RESTORE_SCRIPT"
+    echo "  Test Results:   $TESTS_DIR/"
     echo ""
-    echo "Next steps:"
-    echo "  1. Review performance results"
-    echo "  2. Apply optimizations if needed"
-    echo "  3. Deploy to production servers"
+    echo "Quick Commands:"
+    echo "  View summary:      cat $SUMMARY_FILE"
+    echo "  View full log:     less $FULL_LOG"
+    echo "  Restore settings:  sudo bash $RESTORE_SCRIPT"
+    echo "  List test files:   ls -lh $TESTS_DIR/"
     echo ""
     
 } | tee -a "$FULL_LOG"
 
-print_success "All tests completed successfully!"
-print_success "Report directory: $REPORT_DIR"
+print_success "Complete!"
 
 exit 0
