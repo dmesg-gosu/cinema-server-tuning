@@ -48,22 +48,22 @@
 cinema-server-tuning/
 ├── README.md                           # Этот файл
 ├── scripts/
-│   ├── baseline-diagnostics.sh        # Собрать метрики ДО оптимизации
+│   ├── cinema-tuning-master.sh        # 🌟 ОСНОВНОЙ СКРИПТ - запускает всё и собирает отчёт
+│   ├── cinema-test-suite-advanced.sh  # Расширенные тесты (256K блоки, RAID, concurrent I/O)
 │   ├── cinema-test-suite.sh           # Базовые тесты производительности
-│   ├── cinema-test-suite-advanced.sh  # Расширенные тесты (256K блоки, RAID)
+│   ├── baseline-diagnostics.sh        # Собрать метрики ДО оптимизации
 │   ├── diagnose-server.sh             # Полная диагностика системы
 │   ├── network-tuning.sh              # Оптимизация сетевого стека
 │   └── raid-tuning.sh                 # Настройка RAID параметров
 ├── configs/
-│   ├── 99-performance.conf            # sysctl параметры для ядра
-│   └── limits.conf                    # File descriptor limits
+│   └── 99-performance.conf            # sysctl параметры для ядра (TCP, I/O, memory)
 ├── ansible/
-│   └── linux-tuning-cinema-role.yml   # Ansible роль для автоматизации
+│   └── linux-tuning-cinema-role.yml   # Ansible роль для автоматизации на 100+ серверов
 ├── docs/
-│   ├── TUNING-GUIDE.md               # Подробный гайд по тюнингу
-│   ├── RAID-SETUP.md                 # Настройка RAID для кино
-│   ├── NETWORK-OPTIMIZATION.md       # Оптимизация сети
-│   └── TROUBLESHOOTING.md            # Решение проблем
+│   ├── TUNING-GUIDE.md               # 📖 Подробный гайд - что каждый параметр делает и почему
+│   ├── RAID-SETUP.md                 # Настройка RAID для кино (в планах)
+│   ├── NETWORK-OPTIMIZATION.md       # Оптимизация сети (в планах)
+│   └── TROUBLESHOOTING.md            # Решение проблем (в планах)
 └── tests/
     └── test-scenarios.md              # Описание тестовых сценариев
 ```
@@ -74,21 +74,51 @@ cinema-server-tuning/
 
 ### На Ubuntu 20.04+ (Debian-based)
 
+#### Вариант 1: БЫСТРО (Используй мастер-скрипт) ⭐ РЕКОМЕНДУЕТСЯ
+
 ```bash
 # 1. Клонируй репозиторий
-git clone https://github.com/yourusername/cinema-server-tuning.git
+git clone https://github.com/dmesg-gosu/cinema-server-tuning.git
 cd cinema-server-tuning
 
 # 2. Сделай скрипты исполняемыми
 chmod +x scripts/*.sh
 
-# 3. Запусти базовые тесты (займёт ~15 минут)
-sudo ./scripts/cinema-test-suite.sh
+# 3. Запусти мастер-скрипт (выполнит всё и соберёт отчёт)
+sudo ./scripts/cinema-tuning-master.sh
 
-# 4. Запусти расширенные тесты (займёт ~30 минут)
+# 4. Результаты и красивый отчёт в /tmp/cinema-tuning-report-YYYYMMDD-HHMMSS/
+# Займёт ~40-50 минут (включает все тесты)
+```
+
+**Мастер-скрипт автоматически:**
+- ✓ Собирает baseline метрики (до оптимизации)
+- ✓ Запускает расширенные тесты (FIO, iperf3)
+- ✓ Применяет sysctl оптимизации
+- ✓ Выполняет диагностику системы
+- ✓ Выводит красивый отчёт с рекомендациями
+- ✓ Сохраняет всё в одну папку для анализа
+
+#### Вариант 2: По частям (для экспериментов)
+
+```bash
+# 1. Клонируй репозиторий
+git clone https://github.com/dmesg-gosu/cinema-server-tuning.git
+cd cinema-server-tuning
+
+# 2. Сделай скрипты исполняемыми
+chmod +x scripts/*.sh
+
+# 3. Собери baseline (метрики ПЕРЕД оптимизацией)
+sudo ./scripts/baseline-diagnostics.sh
+
+# 4. Запусти расширенные тесты (~30 минут)
 sudo ./scripts/cinema-test-suite-advanced.sh
 
-# 5. Результаты сохранятся в /tmp/cinema-tuning-YYYYMMDD-HHMMSS/
+# 5. Запусти полную диагностику
+sudo ./scripts/diagnose-server.sh > diagnostics.txt
+
+# 6. Результаты в /tmp/cinema-tuning-*/
 ```
 
 ### С Ansible (для нескольких серверов)
@@ -110,6 +140,36 @@ ansible-playbook -i inventory.ini playbook.yml
 ---
 
 ## 📜 Скрипты
+
+### `cinema-tuning-master.sh` ⭐ ГЛАВНЫЙ СКРИПТ
+
+**Используй его!** Оркестрирует все остальные скрипты и собирает результаты в красивый отчёт.
+
+```bash
+sudo ./scripts/cinema-tuning-master.sh
+# ~40-50 минут
+# Результаты в /tmp/cinema-tuning-report-YYYYMMDD-HHMMSS/
+```
+
+**Что он делает:**
+1. Проверяет все зависимости
+2. Собирает baseline метрики (ДО)
+3. Устанавливает необходимые пакеты
+4. Применяет sysctl оптимизации
+5. Запускает advanced тесты (FIO 4K + 256K + concurrent, iperf3)
+6. Выполняет диагностику
+7. Выводит итоговый отчёт с рекомендациями
+8. Сохраняет всё в один файл `SUMMARY.txt`
+
+**Результаты:**
+- `SUMMARY.txt` — красивый отчёт с выводами
+- `FULL.log` — полный логи всех операций
+- `*-baseline*.txt` — метрики до/после
+- `*-fio-*.txt` — результаты I/O тестов
+- `*-network*.txt` — результаты сетевых тестов
+- `diagnostics.txt` — полная диагностика
+
+---
 
 ### `baseline-diagnostics.sh`
 Собирает текущие метрики системы перед оптимизацией.
@@ -424,3 +484,18 @@ iotop -b -o -d 5 > iotop-report.txt &
 3. Commit: `git commit -m 'Add: description'`
 4. Push: `git push origin improvement/your-feature`
 5. Открой Pull Request
+<<<<<<< HEAD
+=======
+
+---
+
+## 🔗 Полезные ссылки
+
+- [Linux Kernel Documentation](https://www.kernel.org/doc/html/latest/)
+- [FIO - Flexible I/O Tester](https://fio.readthedocs.io/)
+- [iperf3 - Network Testing Tool](https://iperf.fr/)
+- [ethtool - Linux Network Interface Tool](https://man7.org/linux/man-pages/man8/ethtool.8.html)
+- [mdadm - RAID Management](https://raid.wiki.kernel.org/index.php/Main_Page)
+- [BBR Congestion Control](https://github.com/google/bbr)
+- [sysctl Manual](https://man7.org/linux/man-pages/man8/sysctl.8.html)
+>>>>>>> 77dcf6a (Add: master tuning script, comprehensive TUNING-GUIDE, update README)
