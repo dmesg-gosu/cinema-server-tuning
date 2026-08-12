@@ -177,7 +177,7 @@ tuning-reports/YYYYMMDD-HHMMSS/
 ├── FULL.log                 # Полный логи операций
 ├── system-info.txt          # Информация о системе
 ├── diagnostics.txt          # Полная диагностика
-└── tests/                   # Тестовые файлы (не загромождают корень!)
+└── tests/                   # Тестовые файлы
     ├── 06a-fio-read-4k.txt
     ├── 06b-fio-read-256k.txt
     ├── 06c-fio-concurrent.txt
@@ -497,20 +497,6 @@ iotop -b -o -d 5 > iotop-report.txt &
 
 ---
 
-## 🤝 Для контрибьюторов
-
-Если ты тестировал на других системах (CentOS, Rocky, Alma) или нашёл улучшения:
-
-1. Fork репозиторий
-2. Создай ветку: `git checkout -b improvement/your-feature`
-3. Commit: `git commit -m 'Add: description'`
-4. Push: `git push origin improvement/your-feature`
-5. Открой Pull Request
-<<<<<<< HEAD
-=======
-
----
-
 ## 🔗 Полезные ссылки
 
 - [Linux Kernel Documentation](https://www.kernel.org/doc/html/latest/)
@@ -520,4 +506,3 @@ iotop -b -o -d 5 > iotop-report.txt &
 - [mdadm - RAID Management](https://raid.wiki.kernel.org/index.php/Main_Page)
 - [BBR Congestion Control](https://github.com/google/bbr)
 - [sysctl Manual](https://man7.org/linux/man-pages/man8/sysctl.8.html)
->>>>>>> 77dcf6a (Add: master tuning script, comprehensive TUNING-GUIDE, update README)
