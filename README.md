@@ -424,35 +424,3 @@ iotop -b -o -d 5 > iotop-report.txt &
 3. Commit: `git commit -m 'Add: description'`
 4. Push: `git push origin improvement/your-feature`
 5. Открой Pull Request
-
----
-
-## 📄 Лицензия
-
-MIT License — используй как угодно в своих проектах.
-
----
-
-## 👤 Автор
-
-**Евгений Самсонов**
-- DevOps Middle, 9+ лет в IT инфраструктуре
-- Специализация: Linux, Kubernetes, CI/CD, высоконагруженные системы
-- Telegram: [@gosu_ai](https://t.me/gosu_ai)
-- Email: zhecao98@gmail.com
-
----
-
-## 🔗 Полезные ссылки
-
-- [Linux Kernel Documentation](https://www.kernel.org/doc/html/latest/)
-- [FIO - Flexible I/O Tester](https://fio.readthedocs.io/)
-- [iperf3 - Network Testing Tool](https://iperf.fr/)
-- [ethtool - Linux Network Interface Tool](https://man7.org/linux/man-pages/man8/ethtool.8.html)
-- [mdadm - RAID Management](https://raid.wiki.kernel.org/index.php/Main_Page)
-
----
-
-**Последнее обновление:** Август 2026
-
-*Используется в production сети кинотеатров по России и СНГ (100+ точек)*
