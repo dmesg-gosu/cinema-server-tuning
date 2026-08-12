@@ -1,0 +1,35 @@
+# FIO test files
+read_test.*
+write_test.*
+*.fio
+
+# Test reports and logs
+/tmp/
+*.log
+cinema-diagnostics-*.txt
+test-movie*.raw
+
+# Temporary files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Environment
+.env
+.env.local
+
+# OS
+*.exe
+*.dll
+.directory
+
+# Git
+.git/
+.gitmodules

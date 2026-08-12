@@ -1,0 +1,302 @@
+---
+# roles/linux-tuning-cinema/tasks/main.yml
+# Роль для оптимизации Linux серверов кинотеатров
+
+- name: Install required packages
+  apt:
+    name:
+      - ethtool
+      - iperf3
+      - sysstat
+      - linux-tools-generic
+      - mdadm
+      - lvm2
+    state: present
+  tags: packages
+
+- name: Create sysctl tuning config
+  copy:
+    content: |
+      # Performance tuning for cinema servers
+      # High I/O, large files, network transfers
+
+      # ========== TCP BUFFERS ==========
+      net.core.rmem_max = 134217728
+      net.core.wmem_max = 134217728
+      net.ipv4.tcp_rmem = 4096 87380 67108864
+      net.ipv4.tcp_wmem = 4096 65536 67108864
+      net.core.rmem_default = 131072
+      net.core.wmem_default = 131072
+
+      # ========== TCP OPTIMIZATION ==========
+      net.ipv4.tcp_window_scaling = 1
+      net.ipv4.tcp_timestamps = 1
+      net.ipv4.tcp_congestion_control = bbr
+      net.ipv4.tcp_fastopen = 3
+      net.ipv4.tcp_tw_reuse = 1
+      net.ipv4.tcp_fin_timeout = 30
+      net.ipv4.tcp_keepalive_time = 300
+
+      # ========== CONNECTION LIMITS ==========
+      net.core.somaxconn = 65535
+      net.ipv4.tcp_max_syn_backlog = 65535
+
+      # ========== DISK I/O ==========
+      vm.dirty_ratio = 30
+      vm.dirty_background_ratio = 10
+      vm.dirty_expire_centisecs = 3000
+      vm.dirty_writeback_centisecs = 500
+      vm.swappiness = 10
+
+      # ========== FILE SYSTEM ==========
+      fs.file-max = 2097152
+      fs.inotify.max_user_watches = 524288
+      fs.pipe-max-size = 1048576
+
+      # ========== KERNEL ==========
+      kernel.pid_max = 4194304
+      kernel.sysrq = 1
+    dest: /etc/sysctl.d/99-cinema-performance.conf
+  notify: Apply sysctl settings
+  tags: sysctl
+
+- name: Apply sysctl settings immediately
+  command: sysctl -p /etc/sysctl.d/99-cinema-performance.conf
+  tags: sysctl
+
+- name: Create network tuning script
+  copy:
+    content: |
+      #!/bin/bash
+      # Network tuning for high-bandwidth transfers
+
+      IFACE=${1:-eth0}
+      
+      echo "Optimizing network for $IFACE..."
+      
+      # Ethtool offloading
+      ethtool -K $IFACE gro on gso on tso on lro off 2>/dev/null || true
+      
+      # Interrupt coalescing
+      ethtool -C $IFACE rx-usecs 100 rx-frames 64 tx-usecs 100 tx-frames 64 2>/dev/null || true
+      
+      # Ring buffers
+      ethtool -G $IFACE rx 4096 tx 4096 2>/dev/null || true
+      
+      # MTU jumbo frames
+      ip link set dev $IFACE mtu 9000 2>/dev/null || true
+      
+      # RSS distribution
+      ethtool -X $IFACE equal 4 2>/dev/null || true
+      
+      echo "Network optimization completed for $IFACE"
+    dest: /usr/local/bin/network-tuning.sh
+    mode: '0755'
+  tags: network
+
+- name: Create RAID tuning script
+  copy:
+    content: |
+      #!/bin/bash
+      # RAID performance tuning
+
+      configure_raid() {
+          local raid_dev=$1
+          local stripe_cache=$2
+          
+          if [ -f "/sys/block/${raid_dev##/dev/}/md/stripe_cache_size" ]; then
+              echo $stripe_cache > /sys/block/${raid_dev##/dev/}/md/stripe_cache_size
+              echo "RAID $raid_dev: stripe_cache set to $stripe_cache KB"
+          fi
+      }
+
+      # Tune RAID arrays (adjust device names as needed)
+      configure_raid /dev/md0 2048
+      configure_raid /dev/md1 2048
+
+      # I/O scheduler for drives
+      for disk in sda sdb sdc sdd nvme0n1 nvme1n1; do
+          if [ -f "/sys/block/$disk/queue/scheduler" ]; then
+              if [[ $disk == nvme* ]]; then
+                  echo mq-deadline > /sys/block/$disk/queue/scheduler
+              else
+                  echo deadline > /sys/block/$disk/queue/scheduler
+              fi
+              echo "Set $disk scheduler"
+          fi
+      done
+
+      # Read-ahead optimization
+      blockdev --setra 4096 /dev/md0 2>/dev/null || true
+      blockdev --setra 2048 /dev/md1 2>/dev/null || true
+
+      echo "RAID tuning completed"
+    dest: /usr/local/bin/raid-tuning.sh
+    mode: '0755'
+  tags: raid
+
+- name: Create systemd service for RAID tuning
+  copy:
+    content: |
+      [Unit]
+      Description=RAID and I/O Performance Tuning
+      After=local-fs.target
+      
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/raid-tuning.sh
+      ExecStart=/usr/local/bin/network-tuning.sh eth0
+      RemainAfterExit=yes
+      
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/performance-tuning.service
+  notify: Enable and start performance tuning service
+  tags: systemd
+
+- name: Create diagnostics script
+  copy:
+    content: |
+      #!/bin/bash
+      # Server diagnostics for cinema infrastructure
+
+      OUTPUT_FILE="/var/log/cinema-diagnostics-$(date +%Y%m%d-%H%M%S).log"
+      
+      {
+          echo "====== CINEMA SERVER DIAGNOSTICS ======"
+          echo "Generated: $(date)"
+          echo "Hostname: $(hostname)"
+          echo ""
+          
+          echo "====== CPU & MEMORY ======"
+          nproc
+          free -h
+          echo ""
+          
+          echo "====== DISK I/O ======"
+          iostat -x 1 3 | tail -15
+          echo ""
+          
+          echo "====== NETWORK ======"
+          netstat -i
+          echo ""
+          ss -s | grep TCP
+          echo ""
+          
+          echo "====== RAID STATUS ======"
+          cat /proc/mdstat
+          echo ""
+          
+          echo "====== TOP PROCESSES ======"
+          top -b -n 1 | head -20
+          
+      } | tee "$OUTPUT_FILE"
+      
+      echo "Diagnostics saved to $OUTPUT_FILE"
+    dest: /usr/local/bin/cinema-diagnostics.sh
+    mode: '0755'
+  tags: diagnostics
+
+- name: Create cron job for periodic diagnostics
+  cron:
+    name: "Cinema server diagnostics"
+    hour: "*/6"
+    minute: "0"
+    job: "/usr/local/bin/cinema-diagnostics.sh > /dev/null 2>&1"
+    user: root
+  tags: cron
+
+- name: Increase file descriptor limits
+  lineinfile:
+    path: /etc/security/limits.conf
+    line: "{{ item }}"
+  loop:
+    - "* soft nofile 65536"
+    - "* hard nofile 65536"
+    - "* soft nproc 65536"
+    - "* hard nproc 65536"
+  notify: Reboot required for limits
+  tags: limits
+
+- name: Create performance monitoring dashboard helper
+  copy:
+    content: |
+      #!/bin/bash
+      # Quick performance check script for cinema servers
+
+      echo "====== CINEMA SERVER PERFORMANCE CHECK ======"
+      echo "Time: $(date)"
+      echo ""
+
+      echo "1. DISK PERFORMANCE (last 5 seconds):"
+      iostat -x 1 2 | tail -5
+      echo ""
+
+      echo "2. NETWORK STATUS:"
+      netstat -i | grep -v lo
+      echo ""
+
+      echo "3. MEMORY & SWAP:"
+      free -h
+      echo ""
+
+      echo "4. TOP CPU PROCESSES:"
+      ps aux --sort=-%cpu | head -6
+      echo ""
+
+      echo "5. TOP MEMORY PROCESSES:"
+      ps aux --sort=-%mem | head -6
+      echo ""
+
+      echo "6. RAID STATUS:"
+      cat /proc/mdstat | head -5
+      echo ""
+
+      echo "7. NETWORK CONNECTIONS:"
+      ss -s | grep TCP
+    dest: /usr/local/bin/cinema-perf-check.sh
+    mode: '0755'
+  tags: monitoring
+
+- name: Print summary
+  debug:
+    msg: |
+      ======= CINEMA SERVER TUNING COMPLETED =======
+      
+      Applied optimizations:
+      - Kernel sysctl tuning (TCP buffers, I/O, dirty pages)
+      - Network optimization (MTU, coalescing, ring buffers)
+      - RAID performance tuning (stripe cache, I/O scheduler)
+      - File descriptor limits increased
+      
+      Available commands:
+      - cinema-perf-check.sh         : Quick performance check
+      - cinema-diagnostics.sh        : Detailed diagnostics (logged)
+      - network-tuning.sh [iface]    : Manual network tuning
+      - raid-tuning.sh               : Manual RAID tuning
+      
+      Next steps:
+      1. Verify settings: sysctl -p /etc/sysctl.d/99-cinema-performance.conf
+      2. Test network: iperf3 -s (on receiver), iperf3 -c <IP> (on sender)
+      3. Monitor: watch -n 1 iostat -x
+      4. Review diagnostics: less /var/log/cinema-diagnostics-*.log
+      ============================================
+  tags: always
+
+# Handlers
+- name: Apply sysctl settings
+  command: sysctl -p /etc/sysctl.d/99-cinema-performance.conf
+  listen: "Apply sysctl settings"
+
+- name: Enable and start performance tuning service
+  systemd:
+    name: performance-tuning
+    daemon_reload: yes
+    enabled: yes
+    state: started
+  listen: "Enable and start performance tuning service"
+
+- name: Reboot required for limits
+  debug:
+    msg: "File descriptor limits changed. Please reboot the server for changes to take effect."
+  listen: "Reboot required for limits"
